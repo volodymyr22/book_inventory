@@ -1,64 +1,85 @@
-# views.py
-
-from rest_framework import generics
+from django.db.models import Q
+from rest_framework import viewsets, status
 from rest_framework.response import Response
-from rest_framework import status
-from .models import Author, Book, Storing, StoringHistory
-from .serializers import (
-    AuthorSerializer,
-    BookSerializer,
-    StoringSerializer,
-    StoringHistorySerializer,
-)
+from rest_framework.decorators import action
+from .models import Author, Book, StoringInformation
+from .serializers import AuthorSerializer, BookSerializer, StoringInformationSerializer
+from django.shortcuts import get_object_or_404
+from datetime import datetime
 
 
-class AuthorAPIView(generics.CreateAPIView, generics.RetrieveAPIView):
+class AuthorViewSet(viewsets.ModelViewSet):
     queryset = Author.objects.all()
     serializer_class = AuthorSerializer
 
-    def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
-
-class BookAPIView(generics.CreateAPIView, generics.RetrieveAPIView):
+class BookViewSet(viewsets.ModelViewSet):
     queryset = Book.objects.all()
     serializer_class = BookSerializer
 
-    def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+    def list(self, request, *args, **kwargs):
+        barcode = request.query_params.get('barcode', None)
+        if barcode is not None:
+            books = self.queryset.filter(Q(barcode__startswith=barcode)).order_by('barcode')
+            serializer = self.get_serializer(books, many=True)
+            return Response({'found': len(books), 'items': serializer.data})
+        else:
+            return super().list(request, *args, **kwargs)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer_data = self.get_serializer(instance).data
+
+        storing_info = StoringInformation.objects.filter(book=instance).last()
+        if storing_info:
+            serializer_data['quantity'] = storing_info.quantity
+        else:
+            serializer_data['quantity'] = 0
+
+        return Response(serializer_data)
 
 
-class StoringAPIView(generics.CreateAPIView):
-    queryset = Storing.objects.all()
-    serializer_class = StoringSerializer
+class StoringInformationViewSet(viewsets.ModelViewSet):
+    queryset = StoringInformation.objects.all()
+    serializer_class = StoringInformationSerializer
 
-    def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+    @action(detail=False, methods=['post'])
+    def add(self, request):
+        barcode = request.data.get('barcode')
+        quantity = request.data.get('quantity', 0)
 
+        book = get_object_or_404(Book, barcode=barcode)
+        StoringInformation.objects.create(book=book, quantity=quantity)
+        return Response({'status': 'quantity added'}, status=status.HTTP_201_CREATED)
 
-class StoringHistoryAPIView(generics.RetrieveAPIView):
-    queryset = Storing.objects.all()
-    serializer_class = StoringHistorySerializer
-    lookup_field = "book__id"
+    @action(detail=False, methods=['post'])
+    def remove(self, request):
+        barcode = request.data.get('barcode')
+        quantity = request.data.get('quantity', 0)
 
-    def get(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-            serializer = self.get_serializer(instance)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        except Storing.DoesNotExist:
-            return Response(
-                {"error": "Entity not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+        book = get_object_or_404(Book, barcode=barcode)
+        StoringInformation.objects.create(book=book, quantity=-quantity)
+        return Response({'status': 'quantity removed'}, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'])
+    def history(self, request):
+        start_date = request.query_params.get('start', None)
+        end_date = request.query_params.get('end', None)
+        book_key = request.query_params.get('book', None)
+
+        if start_date:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d')
+        if end_date:
+            end_date = datetime.strptime(end_date, '%Y-%m-%d')
+
+        history_query = StoringInformation.objects.all()
+
+        if book_key:
+            history_query = history_query.filter(book__id=book_key)
+        if start_date:
+            history_query = history_query.filter(timestamp__gte=start_date)
+        if end_date:
+            history_query = history_query.filter(timestamp__lte=end_date)
+
+        serializer = StoringInformationSerializer(history_query, many=True)
+        return Response(serializer.data)

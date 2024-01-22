@@ -2,33 +2,24 @@ from django.db import models
 
 
 class Author(models.Model):
-    name = models.CharField(max_length=255)
+    name = models.CharField(max_length=100)
     birth_date = models.DateField()
+
+    def __str__(self):
+        return self.name
 
 
 class Book(models.Model):
-    barcode = models.CharField(max_length=255, blank=True, null=True)
-    title = models.CharField(max_length=255)
-    publish_year = models.PositiveIntegerField()
+    barcode = models.CharField(max_length=100, blank=True, null=True)
+    title = models.CharField(max_length=100)
+    publish_year = models.IntegerField()
     author = models.ForeignKey(Author, on_delete=models.CASCADE)
 
+    def __str__(self):
+        return self.title
 
-class Storing(models.Model):
+
+class StoringInformation(models.Model):
     book = models.ForeignKey(Book, on_delete=models.CASCADE)
-    quantity = models.PositiveIntegerField()
-
-    @property
-    def history(self):
-        history_entries = StoringHistory.objects.filter(book=self.book).order_by(
-            "-date"
-        )
-        return [
-            {"date": entry.date, "quantity": entry.quantity}
-            for entry in history_entries
-        ]
-
-
-class StoringHistory(models.Model):
-    book = models.ForeignKey(Book, on_delete=models.CASCADE)
-    date = models.DateTimeField(auto_now_add=True)
-    quantity = models.PositiveIntegerField()
+    quantity = models.IntegerField()
+    timestamp = models.DateTimeField(auto_now_add=True)
