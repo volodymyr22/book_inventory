@@ -158,9 +158,16 @@ Before you begin, ensure you have the following installed:
     - Response: 201 Created
 
 - **Bulk Leftovers from File**
-    - POST `/leftovers/bulk`
+    - POST /leftovers/bulk
     - Upload an Excel or TXT file with barcode and quantity information.
-
+    - Response:
+      ```json
+      [
+           {"book": 1, "quantity": 2},
+           {"book": 1, "quantity": 5},
+           {"book": 2, "quantity": -4}
+      ]
+      ```
 ### History
 
 - **Get Storing History**
@@ -182,3 +189,8 @@ Before you begin, ensure you have the following installed:
           }
       ]
       ```
+
+## Tests
+
+- Tests created for all endpoints.
+- Run tests with `python manage.py test`
