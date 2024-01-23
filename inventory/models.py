@@ -23,3 +23,6 @@ class StoringInformation(models.Model):
     book = models.ForeignKey(Book, on_delete=models.CASCADE)
     quantity = models.IntegerField()
     timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.book.title + " " + str(self.quantity)

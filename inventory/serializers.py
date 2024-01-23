@@ -2,6 +2,8 @@ import datetime
 
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
+from rest_framework.fields import DateField, IntegerField, DateTimeField
+from rest_framework.relations import PrimaryKeyRelatedField
 
 from inventory.models import Author, Book, StoringInformation
 
@@ -12,7 +14,7 @@ def validate_birth_date(value):
 
 
 class AuthorSerializer(serializers.ModelSerializer):
-    birth_date = serializers.DateField(write_only=True, format='%Y-%m-%d', validators=[validate_birth_date])
+    birth_date = DateField(write_only=True, format='%Y-%m-%d', validators=[validate_birth_date])
 
     class Meta:
         model = Author
@@ -26,11 +28,13 @@ class AuthorBirthDateSerializer(serializers.ModelSerializer):
 
 
 class BookSerializer(serializers.ModelSerializer):
-    publish_year = serializers.IntegerField(min_value=1900)
+    publish_year = IntegerField(min_value=1900)
+    author = AuthorBirthDateSerializer(read_only=True)
+    author_id = PrimaryKeyRelatedField(queryset=Author.objects.all(), write_only=True, source='author')
 
     class Meta:
         model = Book
-        fields = ['id', 'barcode', 'title', 'publish_year', 'author']
+        fields = ['id', 'barcode', 'title', 'publish_year', 'author', 'author_id']
 
 
 class BookStoringSerializer(serializers.ModelSerializer):
@@ -40,8 +44,9 @@ class BookStoringSerializer(serializers.ModelSerializer):
 
 
 class StoringInformationSerializer(serializers.ModelSerializer):
-    timestamp = serializers.DateTimeField(format='%Y-%m-%d')
+    timestamp = DateTimeField(format='%Y-%m-%d', read_only=True)
+    book = PrimaryKeyRelatedField(queryset=Book.objects.all(), write_only=True)
 
     class Meta:
         model = StoringInformation
-        fields = ['quantity', 'timestamp']
+        fields = ['quantity', 'timestamp', 'book']

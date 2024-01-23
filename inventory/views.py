@@ -1,12 +1,20 @@
-import xlrd
+from datetime import datetime
+
+import openpyxl
+
+from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view
+
 from .models import Author, Book, StoringInformation
 from .serializers import AuthorSerializer, BookSerializer, StoringInformationSerializer, BookStoringSerializer
-from django.shortcuts import get_object_or_404
-from datetime import datetime
+
+
+@api_view(['GET'])
+def ping(request):
+    return Response({'message': 'pong'})
 
 
 class AuthorViewSet(viewsets.ModelViewSet):
@@ -31,11 +39,12 @@ class BookViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         serializer_data = self.get_serializer(instance).data
 
-        storing_info = StoringInformation.objects.filter(book=instance).last()
-        if storing_info:
-            serializer_data['quantity'] = storing_info.quantity
-        else:
-            serializer_data['quantity'] = 0
+        quantity = 0
+        storing_info = StoringInformation.objects.filter(book=instance)
+
+        for storing in storing_info:
+            quantity += storing.quantity
+        serializer_data['quantity'] = quantity
 
         return Response(serializer_data)
 
@@ -56,12 +65,20 @@ class StoringInformationViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def remove(self, request):
         barcode = request.data.get('barcode')
-        quantity = request.data.get('quantity', 0)
+        quantity = int(request.data.get('quantity', 0))
 
         book = get_object_or_404(Book, barcode=barcode)
-        last = StoringInformation.objects.filter(book=book).last()
-        StoringInformation.objects.create(book=book, quantity=-quantity)
 
+        quantity_end = 0
+        storing_info = StoringInformation.objects.filter(book=book)
+
+        for storing in storing_info:
+            quantity_end += storing.quantity
+
+        if quantity_end - quantity < 0:
+            return Response({'error': 'quantity is not enough'}, status=status.HTTP_400_BAD_REQUEST)
+
+        StoringInformation.objects.create(book=book, quantity=-quantity)
         return Response({'status': 'quantity removed'}, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['get'])
@@ -99,22 +116,24 @@ class StoringInformationViewSet(viewsets.ModelViewSet):
         return Response(history_data)
 
     @action(detail=False, methods=['post'])
-    def bulk_add(self, request):
+    def bulk(self, request):
         uploaded_file = request.FILES.get('file')
 
         if uploaded_file:
             try:
                 file_extension = uploaded_file.name.split('.')[-1].lower()
 
-                if file_extension == 'xls':
+                if file_extension == 'xls' or file_extension == 'xlsx':
                     data = self.parse_excel_file(uploaded_file)
                 elif file_extension == 'txt':
                     data = self.parse_txt_file(uploaded_file)
                 else:
                     return Response({'error': 'Unsupported file format'}, status=status.HTTP_400_BAD_REQUEST)
+
                 serializer = self.get_serializer(data=data, many=True)
                 if serializer.is_valid():
                     serializer.save()
+
                 return Response(data, status=status.HTTP_200_OK)
             except Exception as e:
                 return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -124,12 +143,16 @@ class StoringInformationViewSet(viewsets.ModelViewSet):
     def parse_excel_file(self, uploaded_file):
         data = []
         try:
-            workbook = xlrd.open_workbook(file_contents=uploaded_file.read())
-            sheet = workbook.sheet_by_index(0)
+            workbook = openpyxl.load_workbook(uploaded_file)
+            sheet = workbook.active
 
-            for row_index in range(1, sheet.nrows):
-                barcode = sheet.cell(row_index, 0).value.strip()
-                quantity = sheet.cell(row_index, 1).value
+            for row in sheet.iter_rows(min_row=1):
+                barcode_cell, quantity_cell = row[:2]
+                barcode = barcode_cell.value
+                if barcode is not None:
+                    barcode = str(barcode).strip()
+
+                quantity = quantity_cell.value
 
                 if not barcode:
                     continue
@@ -137,12 +160,9 @@ class StoringInformationViewSet(viewsets.ModelViewSet):
                 try:
                     quantity = int(quantity)
                 except ValueError:
-                    raise ValueError(f'Row {row_index + 1}: Quantity must be a valid integer')
+                    raise ValueError(f'Row {barcode_cell.row}: Quantity must be a valid integer')
 
-                book = Book.objects.filter(barcode=barcode).first()
-                if not book:
-                    raise ValueError(f'Row {row_index + 1}: Barcode not found in the database')
-
+                book = get_object_or_404(Book, barcode=barcode)
                 data.append({'book': book.id, 'quantity': quantity})
 
         except Exception as e:
@@ -153,18 +173,20 @@ class StoringInformationViewSet(viewsets.ModelViewSet):
     def parse_txt_file(self, uploaded_file):
         data = []
         lines = uploaded_file.read().decode('utf-8').splitlines()
-        print(lines)
         current_barcode = None
-        current_quantity = None
 
         for line in lines:
             line = line.strip()
+
             if line.startswith("BRC"):
                 current_barcode = line[3:]
             elif line.startswith("QNT"):
                 try:
-                    current_quantity = int(line[3:])
-                    data.append({'book': current_barcode, 'quantity': current_quantity})
+                    if current_barcode != "":
+                        current_quantity = int(line[3:])
+                        book = get_object_or_404(Book, barcode=current_barcode)
+                        data.append({'book': book.id, 'quantity': current_quantity})
+                        current_barcode = ""
                 except ValueError:
                     raise ValueError(f'Invalid quantity format: {line}')
 
